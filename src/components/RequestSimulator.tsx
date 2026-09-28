@@ -7,7 +7,7 @@ interface RequestSimulatorProps {
 }
 
 export function RequestSimulator({ routes }: RequestSimulatorProps) {
-  const [requestPath, setRequestPath] = useState('/psp-tmis-ai-mobile/user/list')
+  const [requestPath, setRequestPath] = useState('/preview/images/1.png')
   const result = useMemo(
     () => simulateRequest(requestPath, routes),
     [requestPath, routes],
@@ -16,10 +16,10 @@ export function RequestSimulator({ routes }: RequestSimulatorProps) {
   return (
     <section className="card simulatorCard">
       <header>
-        <span>6</span>
+        <span>7</span>
         <div>
           <h2>请求路径模拟器</h2>
-          <p>预览 Nginx 会匹配哪条 location，以及最终转发到哪里</p>
+          <p>包含显式 proxy_pass URI 的替换结果</p>
         </div>
       </header>
 
@@ -39,20 +39,32 @@ export function RequestSimulator({ routes }: RequestSimulatorProps) {
             <code>{result.matchedRoute.path}</code>
           </div>
           <div>
-            <span>路径模式</span>
-            <strong>{result.matchedRoute.pathMode === 'strip' ? '去前缀' : '保留完整路径'}</strong>
+            <span>转发模式</span>
+            <strong>
+              {result.matchedRoute.pathMode === 'custom'
+                ? '自定义 URI 映射'
+                : result.matchedRoute.pathMode === 'strip'
+                  ? '去前缀'
+                  : '保留完整路径'}
+            </strong>
           </div>
+          {result.matchedRoute.proxyPassUri && (
+            <div>
+              <span>proxy_pass URI</span>
+              <code>{result.matchedRoute.proxyPassUri}</code>
+            </div>
+          )}
           <div className="simulationTarget">
             <span>最终 upstream</span>
             <code>{result.upstreamUrl}</code>
           </div>
         </div>
       ) : (
-        <div className="simulationEmpty">当前没有 location 能匹配这个请求。</div>
+        <div className="simulationEmpty">当前 Server 没有 location 能匹配这个请求。</div>
       )}
 
       <p className="simulationHint">
-        当前模拟器覆盖精确匹配和前缀匹配；正则 location 会在后续高级模式中加入。
+        模拟器覆盖精确匹配、前缀匹配和 proxy_pass URI 替换；正则 location 仍会保留为导入提示。
       </p>
     </section>
   )

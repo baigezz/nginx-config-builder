@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { normalizePath } from '../lib/route-parser'
 import type { LocationModifier, PathMode, ProxyRoute } from '../types/nginx'
 
@@ -8,13 +8,20 @@ interface RoutesTableProps {
   onNotice: (message: string) => void
 }
 
+function routeModeLabel(route: ProxyRoute) {
+  if (route.pathMode === 'custom') return `URI → ${route.proxyPassUri}`
+  if (route.proxyPassUri && route.proxyPassUri === route.path) return '保留 · 显式 URI'
+  if (route.pathMode === 'strip') return '前缀 · 去前缀'
+  return '前缀 · 保留'
+}
+
 export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ProxyRoute | null>(null)
 
   const beginEdit = (route: ProxyRoute) => {
     setEditingId(route.id)
-    setDraft({ ...route })
+    setDraft({ ...route, rawDirectives: [...route.rawDirectives] })
   }
 
   const cancelEdit = () => {
@@ -27,8 +34,10 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
 
     const normalized = {
       ...draft,
-      path: normalizePath(draft.path, draft.locationModifier),
-      upstream: draft.upstream.trim(),
+      path: normalizePath(draft.path),
+      upstream: draft.upstream.trim().replace(/\/+$/, ''),
+      proxyPassUri: draft.proxyPassUri.trim(),
+      rawDirectives: draft.rawDirectives.map((item) => item.trim()).filter(Boolean),
     }
 
     const duplicate = routes.some(
@@ -53,13 +62,41 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
     if (editingId === id) cancelEdit()
   }
 
+  const setPathMode = (mode: PathMode) => {
+    if (!draft) return
+    setDraft({
+      ...draft,
+      pathMode: mode,
+      proxyPassUri:
+        mode === 'preserve'
+          ? ''
+          : mode === 'strip'
+            ? '/'
+            : draft.proxyPassUri || '/',
+    })
+  }
+
+  const setProxyPassUri = (value: string) => {
+    if (!draft) return
+    const mode: PathMode =
+      !value
+        ? 'preserve'
+        : value === '/'
+          ? 'strip'
+          : value === draft.path
+            ? 'preserve'
+            : 'custom'
+
+    setDraft({ ...draft, proxyPassUri: value, pathMode: mode })
+  }
+
   return (
     <section className="card">
       <header>
-        <span>5</span>
+        <span>6</span>
         <div>
           <h2>路由列表 <em>({routes.length} 条)</em></h2>
-          <p>编辑 location、WebSocket、超时、上传限制和缓存策略</p>
+          <p>编辑 location、proxy_pass URI、WebSocket、超时和保留指令</p>
         </div>
       </header>
 
@@ -68,27 +105,26 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
           <thead>
             <tr>
               <th>路径</th>
-              <th>上游地址</th>
-              <th>匹配方式</th>
+              <th>Proxy Pass</th>
+              <th>匹配 / URI</th>
               <th>能力</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {routes.map((route) => (
-              <>
-                <tr key={route.id}>
+              <Fragment key={route.id}>
+                <tr>
                   <td><code>{route.path}</code></td>
-                  <td><code>{route.upstream}</code></td>
+                  <td><code>{route.upstream}{route.proxyPassUri}</code></td>
                   <td>
                     <span className="pill">
                       {route.locationModifier === 'exact'
-                        ? '= 精确'
+                        ? '= 精确 · '
                         : route.locationModifier === 'prefer-prefix'
-                          ? '^~ 优先前缀'
-                          : route.pathMode === 'strip'
-                            ? '前缀 · 去前缀'
-                            : '前缀 · 保留'}
+                          ? '^~ · '
+                          : ''}
+                      {routeModeLabel(route)}
                     </span>
                   </td>
                   <td className="featureTags">
@@ -96,7 +132,14 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                     {route.readTimeout && <span>Timeout</span>}
                     {route.clientMaxBodySize && <span>Upload</span>}
                     {route.disableCache && <span>No Cache</span>}
-                    {!route.websocket && !route.readTimeout && !route.clientMaxBodySize && !route.disableCache && <i>默认</i>}
+                    {route.rawDirectives.length > 0 && <span>Raw {route.rawDirectives.length}</span>}
+                    {route.proxyPassUri && <span>URI</span>}
+                    {!route.websocket &&
+                      !route.readTimeout &&
+                      !route.clientMaxBodySize &&
+                      !route.disableCache &&
+                      !route.rawDirectives.length &&
+                      !route.proxyPassUri && <i>默认</i>}
                   </td>
                   <td className="actions">
                     <button className="link" onClick={() => beginEdit(route)}>编辑</button>
@@ -105,7 +148,7 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                 </tr>
 
                 {editingId === route.id && draft && (
-                  <tr className="routeEditorRow" key={`${route.id}-editor`}>
+                  <tr className="routeEditorRow">
                     <td colSpan={5}>
                       <div className="routeEditor">
                         <div className="editorGrid2">
@@ -117,10 +160,12 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                             />
                           </label>
                           <label>
-                            Upstream
+                            Upstream 主机
                             <input
                               value={draft.upstream}
-                              onChange={(event) => setDraft({ ...draft, upstream: event.target.value })}
+                              onChange={(event) =>
+                                setDraft({ ...draft, upstream: event.target.value })
+                              }
                             />
                           </label>
                         </div>
@@ -146,14 +191,24 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                             路径转发
                             <select
                               value={draft.pathMode}
-                              onChange={(event) =>
-                                setDraft({ ...draft, pathMode: event.target.value as PathMode })
-                              }
+                              onChange={(event) => setPathMode(event.target.value as PathMode)}
                             >
                               <option value="preserve">保留完整路径</option>
                               <option value="strip">移除匹配前缀</option>
+                              <option value="custom">自定义 URI 映射</option>
                             </select>
                           </label>
+                          <label>
+                            proxy_pass URI
+                            <input
+                              value={draft.proxyPassUri}
+                              onChange={(event) => setProxyPassUri(event.target.value)}
+                              placeholder="留空、/、/api 或与 location 相同"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="editorGrid3">
                           <label>
                             上传大小
                             <input
@@ -162,6 +217,52 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                                 setDraft({ ...draft, clientMaxBodySize: event.target.value })
                               }
                               placeholder="例如 50m"
+                            />
+                          </label>
+                          <label>
+                            Connect Timeout
+                            <input
+                              value={draft.connectTimeout}
+                              onChange={(event) =>
+                                setDraft({ ...draft, connectTimeout: event.target.value })
+                              }
+                              placeholder="例如 5s"
+                            />
+                          </label>
+                          <label>
+                            Read Timeout
+                            <input
+                              value={draft.readTimeout}
+                              onChange={(event) =>
+                                setDraft({ ...draft, readTimeout: event.target.value })
+                              }
+                              placeholder="例如 60s"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="editorGrid2">
+                          <label>
+                            Send Timeout
+                            <input
+                              value={draft.sendTimeout}
+                              onChange={(event) =>
+                                setDraft({ ...draft, sendTimeout: event.target.value })
+                              }
+                              placeholder="例如 60s"
+                            />
+                          </label>
+                          <label>
+                            保留的原始指令（每行一条）
+                            <textarea
+                              value={draft.rawDirectives.join('\n')}
+                              onChange={(event) =>
+                                setDraft({
+                                  ...draft,
+                                  rawDirectives: event.target.value.split(/\r?\n/),
+                                })
+                              }
+                              placeholder="proxy_set_header X-Custom $http_x_custom;"
                             />
                           </label>
                         </div>
@@ -189,39 +290,6 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                           </label>
                         </div>
 
-                        <div className="editorGrid3">
-                          <label>
-                            Connect Timeout
-                            <input
-                              value={draft.connectTimeout}
-                              onChange={(event) =>
-                                setDraft({ ...draft, connectTimeout: event.target.value })
-                              }
-                              placeholder="例如 5s"
-                            />
-                          </label>
-                          <label>
-                            Read Timeout
-                            <input
-                              value={draft.readTimeout}
-                              onChange={(event) =>
-                                setDraft({ ...draft, readTimeout: event.target.value })
-                              }
-                              placeholder="例如 60s"
-                            />
-                          </label>
-                          <label>
-                            Send Timeout
-                            <input
-                              value={draft.sendTimeout}
-                              onChange={(event) =>
-                                setDraft({ ...draft, sendTimeout: event.target.value })
-                              }
-                              placeholder="例如 60s"
-                            />
-                          </label>
-                        </div>
-
                         <div className="editorActions">
                           <button className="secondary" onClick={cancelEdit}>取消</button>
                           <button className="primary" onClick={saveEdit}>保存路由</button>
@@ -230,7 +298,7 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
           </tbody>
         </table>

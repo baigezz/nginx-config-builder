@@ -5,41 +5,67 @@ import { NginxImport } from './components/NginxImport'
 import { PresetPicker } from './components/PresetPicker'
 import { RequestSimulator } from './components/RequestSimulator'
 import { RoutesTable } from './components/RoutesTable'
+import { ServerManager } from './components/ServerManager'
 import { presets } from './data/presets'
 import { generateNginxConfig } from './lib/nginx-generator'
-import { createRoute, parseBulkRoutes, parseCsv, parseJson } from './lib/route-parser'
+import {
+  createRoute,
+  createServer,
+  parseBulkRoutes,
+  parseCsv,
+  parseJson,
+} from './lib/route-parser'
 import { validateConfig } from './lib/validator'
-import type { NginxPreset, PathMode, ProxyRoute, ServerConfig } from './types/nginx'
+import type { NginxPreset, NginxServer, PathMode, ProxyRoute } from './types/nginx'
 
 const starterPaths = `/psp-tmis-ai-mobile/
 /psp-tmis-base-mobile/
 /psp-tmis-net-taxi-mobile/`
 
+function createInitialServer() {
+  return createServer(
+    { domain: 'example.com', port: '80' },
+    parseBulkRoutes(starterPaths, 'http://10.0.0.20:8080', 'preserve'),
+  )
+}
+
 function App() {
-  const [domain, setDomain] = useState('example.com')
-  const [port, setPort] = useState('80')
+  const [servers, setServers] = useState<NginxServer[]>(() => [createInitialServer()])
+  const [activeServerId, setActiveServerId] = useState('')
   const [input, setInput] = useState(starterPaths)
   const [defaultUpstream, setDefaultUpstream] = useState('http://10.0.0.20:8080')
   const [pathMode, setPathMode] = useState<PathMode>('preserve')
-  const [routes, setRoutes] = useState<ProxyRoute[]>(() =>
-    parseBulkRoutes(starterPaths, 'http://10.0.0.20:8080', 'preserve'),
-  )
   const [notice, setNotice] = useState('')
 
-  const server = useMemo(() => ({ domain, port }), [domain, port])
-  const config = useMemo(() => generateNginxConfig(server, routes), [server, routes])
-  const issues = useMemo(() => validateConfig(server, routes), [server, routes])
-  const hasErrors = issues.some((issue) => issue.level === 'error')
+  const activeServer =
+    servers.find((server) => server.id === activeServerId) ?? servers[0]
 
-  const replaceFromImport = (nextServer: ServerConfig, incoming: ProxyRoute[]) => {
-    setDomain(nextServer.domain)
-    setPort(nextServer.port)
-    setRoutes(incoming)
+  const config = useMemo(() => generateNginxConfig(servers), [servers])
+  const issues = useMemo(() => validateConfig(servers), [servers])
+  const hasErrors = issues.some((issue) => issue.level === 'error')
+  const totalRoutes = useMemo(
+    () => servers.reduce((sum, server) => sum + server.routes.length, 0),
+    [servers],
+  )
+
+  const updateActiveServer = (patch: Partial<NginxServer>) => {
+    if (!activeServer) return
+    setServers((current) =>
+      current.map((server) =>
+        server.id === activeServer.id ? { ...server, ...patch } : server,
+      ),
+    )
+  }
+
+  const setActiveRoutes = (routes: ProxyRoute[]) => {
+    updateActiveServer({ routes })
   }
 
   const mergeRoutes = (incoming: ProxyRoute[]) => {
+    if (!activeServer) return
+
     const seen = new Set(
-      routes.map((route) => `${route.locationModifier}:${route.path}`),
+      activeServer.routes.map((route) => `${route.locationModifier}:${route.path}`),
     )
     const accepted: ProxyRoute[] = []
     const duplicates: string[] = []
@@ -56,12 +82,44 @@ function App() {
       accepted.push(route)
     })
 
-    setRoutes((current) => [...current, ...accepted])
+    setActiveRoutes([...activeServer.routes, ...accepted])
     setNotice(
       duplicates.length
         ? `已添加 ${accepted.length} 条，跳过 ${duplicates.length} 条重复 location：${duplicates.join('、')}`
-        : `已添加 ${accepted.length} 条路由`,
+        : `已添加 ${accepted.length} 条路由到 ${activeServer.domain}`,
     )
+  }
+
+  const replaceServers = (incoming: NginxServer[]) => {
+    if (!incoming.length) return
+    setServers(incoming)
+    setActiveServerId(incoming[0].id)
+  }
+
+  const appendServers = (incoming: NginxServer[]) => {
+    if (!incoming.length) return
+    setServers((current) => [...current, ...incoming])
+    setActiveServerId(incoming[0].id)
+  }
+
+  const addServer = () => {
+    const server = createServer({
+      domain: `server-${servers.length + 1}.example.com`,
+      port: '80',
+    })
+    setServers((current) => [...current, server])
+    setActiveServerId(server.id)
+    setNotice('已创建新的 Server')
+  }
+
+  const removeServer = (id: string) => {
+    if (servers.length <= 1) return
+    const remaining = servers.filter((server) => server.id !== id)
+    setServers(remaining)
+    if (activeServer?.id === id) {
+      setActiveServerId(remaining[0]?.id ?? '')
+    }
+    setNotice('已删除当前 Server')
   }
 
   const addRoutes = () => {
@@ -100,10 +158,10 @@ function App() {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `${domain || 'nginx'}.conf`
+    anchor.download = 'nginx.conf'
     anchor.click()
     URL.revokeObjectURL(url)
-    setNotice('Nginx 配置文件已生成下载')
+    setNotice('nginx.conf 已生成下载')
   }
 
   return (
@@ -120,138 +178,227 @@ function App() {
         <nav>
           <button>快速开始</button>
           <button>常用模板</button>
-          <button>自定义配置</button>
-          <button className="active">导入现有配置</button>
+          <button className="active">多 Server / TLS</button>
+          <button>导入现有配置</button>
         </nav>
 
         <div className="tip">
-          <strong>💡 Stage 4</strong>
-          <p>现在可以把已有 server 配置反解析成表单。复杂 rewrite 和正则 location 会明确提示，不会静默猜测。</p>
+          <strong>💡 Stage 5</strong>
+          <p>支持多个 Server、HTTPS/TLS、proxy_pass URI 映射，并尽量保留未结构化的原始指令。</p>
         </div>
       </aside>
 
       <section className="workspace">
         <div className="formArea">
           <NginxImport
-            onReplace={replaceFromImport}
-            onAppend={mergeRoutes}
+            onReplace={replaceServers}
+            onAppend={appendServers}
             onNotice={setNotice}
           />
 
-          <section className="card">
-            <header>
-              <span>2</span>
-              <div>
-                <h2>常用模板</h2>
-                <p>快速加入常见代理场景，再按实际环境微调</p>
-              </div>
-            </header>
-            <PresetPicker presets={presets} onApply={applyPreset} />
-          </section>
+          <ServerManager
+            servers={servers}
+            activeServerId={activeServer?.id ?? ''}
+            onSelect={setActiveServerId}
+            onAdd={addServer}
+            onRemove={removeServer}
+          />
 
-          <section className="card">
-            <header>
-              <span>3</span>
-              <div>
-                <h2>Server 基础配置</h2>
-                <p>设置域名和监听端口</p>
-              </div>
-            </header>
-            <div className="grid2">
-              <label>
-                域名 (server_name)
-                <input value={domain} onChange={(event) => setDomain(event.target.value)} />
-              </label>
-              <label>
-                监听端口
-                <input value={port} onChange={(event) => setPort(event.target.value)} />
-              </label>
-            </div>
-          </section>
+          {activeServer && (
+            <>
+              <section className="card serverSettingsCard">
+                <header>
+                  <span>3</span>
+                  <div>
+                    <h2>Server 基础与 TLS</h2>
+                    <p>当前编辑：{activeServer.domain}</p>
+                  </div>
+                </header>
 
-          <section className="card">
-            <header>
-              <span>4</span>
-              <div>
-                <h2>批量代理路由</h2>
-                <p>粘贴或导入，一次生成多个 location</p>
-              </div>
-            </header>
+                <div className="grid2">
+                  <label>
+                    域名 (server_name)
+                    <input
+                      value={activeServer.domain}
+                      onChange={(event) => updateActiveServer({ domain: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    监听端口
+                    <input
+                      value={activeServer.port}
+                      onChange={(event) => updateActiveServer({ port: event.target.value })}
+                    />
+                  </label>
+                </div>
 
-            <div className="importBar">
-              <b>批量输入</b>
-              <label className="fileButton">
-                导入 CSV / JSON
-                <input
-                  type="file"
-                  accept=".csv,.json,text/csv,application/json"
-                  onChange={importFile}
-                />
-              </label>
-              <span>CSV: path, upstream, pathMode, websocket</span>
-            </div>
-
-            <div className="builder">
-              <label className="paths">
-                输入路径
-                <textarea value={input} onChange={(event) => setInput(event.target.value)} />
-              </label>
-
-              <div className="options">
-                <label>
-                  默认上游地址
+                <label className="tlsToggle">
                   <input
-                    value={defaultUpstream}
-                    onChange={(event) => setDefaultUpstream(event.target.value)}
+                    type="checkbox"
+                    checked={activeServer.sslEnabled}
+                    onChange={(event) =>
+                      updateActiveServer({ sslEnabled: event.target.checked })
+                    }
+                  />
+                  <span>
+                    <strong>启用 HTTPS / TLS</strong>
+                    <small>生成 listen ... ssl 以及证书配置</small>
+                  </span>
+                </label>
+
+                {activeServer.sslEnabled && (
+                  <div className="tlsGrid">
+                    <label>
+                      ssl_certificate
+                      <input
+                        value={activeServer.sslCertificate}
+                        onChange={(event) =>
+                          updateActiveServer({ sslCertificate: event.target.value })
+                        }
+                        placeholder="/etc/nginx/certs/site.crt"
+                      />
+                    </label>
+                    <label>
+                      ssl_certificate_key
+                      <input
+                        value={activeServer.sslCertificateKey}
+                        onChange={(event) =>
+                          updateActiveServer({ sslCertificateKey: event.target.value })
+                        }
+                        placeholder="/etc/nginx/certs/site.key"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                <label className="rawDirectivesField">
+                  Server 原始指令（每行一条，会原样重新生成）
+                  <textarea
+                    value={activeServer.rawDirectives.join('\n')}
+                    onChange={(event) =>
+                      updateActiveServer({
+                        rawDirectives: event.target.value
+                          .split(/\r?\n/)
+                          .map((line) => line.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                    placeholder={'access_log /var/log/nginx/app.access.log;\ninclude /etc/nginx/snippets/security.conf;'}
                   />
                 </label>
 
-                <fieldset>
-                  <legend>路径转发方式</legend>
-                  <label>
+                {activeServer.rawBlocks.length > 0 && (
+                  <div className="rawBlocksPanel">
+                    <div>
+                      <strong>Raw Blocks · {activeServer.rawBlocks.length}</strong>
+                      <span>暂不结构化编辑，但生成配置时会继续保留</span>
+                    </div>
+                    <pre>{activeServer.rawBlocks.join('\n\n')}</pre>
+                  </div>
+                )}
+              </section>
+
+              <section className="card">
+                <header>
+                  <span>4</span>
+                  <div>
+                    <h2>常用模板</h2>
+                    <p>模板会添加到当前 Server，不影响其他 Server</p>
+                  </div>
+                </header>
+                <PresetPicker presets={presets} onApply={applyPreset} />
+              </section>
+
+              <section className="card">
+                <header>
+                  <span>5</span>
+                  <div>
+                    <h2>批量代理路由</h2>
+                    <p>为当前 Server 批量加入多个 location</p>
+                  </div>
+                </header>
+
+                <div className="importBar">
+                  <b>批量输入</b>
+                  <label className="fileButton">
+                    导入 CSV / JSON
                     <input
-                      type="radio"
-                      checked={pathMode === 'preserve'}
-                      onChange={() => setPathMode('preserve')}
+                      type="file"
+                      accept=".csv,.json,text/csv,application/json"
+                      onChange={importFile}
                     />
-                    保留完整路径
                   </label>
-                  <label>
-                    <input
-                      type="radio"
-                      checked={pathMode === 'strip'}
-                      onChange={() => setPathMode('strip')}
-                    />
-                    移除匹配前缀
+                  <span>CSV 可选第 5 列 proxyPassUri</span>
+                </div>
+
+                <div className="builder">
+                  <label className="paths">
+                    输入路径
+                    <textarea value={input} onChange={(event) => setInput(event.target.value)} />
                   </label>
-                </fieldset>
 
-                <button className="primary" onClick={addRoutes}>
-                  + 解析并添加到列表
-                </button>
-              </div>
-            </div>
+                  <div className="options">
+                    <label>
+                      默认上游地址
+                      <input
+                        value={defaultUpstream}
+                        onChange={(event) => setDefaultUpstream(event.target.value)}
+                      />
+                    </label>
 
-            {notice && <div className="notice">{notice}</div>}
-          </section>
+                    <fieldset>
+                      <legend>默认路径转发方式</legend>
+                      <label>
+                        <input
+                          type="radio"
+                          checked={pathMode === 'preserve'}
+                          onChange={() => setPathMode('preserve')}
+                        />
+                        保留完整路径
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          checked={pathMode === 'strip'}
+                          onChange={() => setPathMode('strip')}
+                        />
+                        移除匹配前缀
+                      </label>
+                    </fieldset>
 
-          <RoutesTable routes={routes} onChange={setRoutes} onNotice={setNotice} />
+                    <button className="primary" onClick={addRoutes}>
+                      + 解析并添加到当前 Server
+                    </button>
+                  </div>
+                </div>
 
-          <RequestSimulator routes={routes} />
+                {notice && <div className="notice">{notice}</div>}
+              </section>
+
+              <RoutesTable
+                routes={activeServer.routes}
+                onChange={setActiveRoutes}
+                onNotice={setNotice}
+              />
+
+              <RequestSimulator routes={activeServer.routes} />
+            </>
+          )}
         </div>
 
         <aside className="preview card">
           <header>
-            <span>7</span>
+            <span>8</span>
             <div>
               <h2>生成的 Nginx 配置</h2>
-              <p>实时预览，可复制或下载</p>
+              <p>完整输出全部 Server，可复制或下载</p>
             </div>
           </header>
 
           <div className="previewTabs">
             <b>完整配置</b>
-            <span>{routes.length} Locations</span>
+            <span>{servers.length} Servers</span>
+            <span>{totalRoutes} Locations</span>
             <span>{issues.length} Checks</span>
           </div>
 
@@ -263,9 +410,11 @@ function App() {
             <div className={`status ${hasErrors ? 'error' : 'warning'}`}>
               <strong>{hasErrors ? '发现需要修复的问题' : '配置可生成，但有提示'}</strong>
               <div className="issueList">
-                {issues.slice(0, 6).map((issue, index) => (
+                {issues.slice(0, 8).map((issue, index) => (
                   <div key={`${issue.message}-${index}`} className={`issue ${issue.level}`}>
-                    <span>{issue.level === 'error' ? '×' : issue.level === 'warning' ? '!' : 'i'}</span>
+                    <span>
+                      {issue.level === 'error' ? '×' : issue.level === 'warning' ? '!' : 'i'}
+                    </span>
                     {issue.message}
                   </div>
                 ))}
