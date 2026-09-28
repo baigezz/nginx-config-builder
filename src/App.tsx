@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import './App.css'
+import { NginxImport } from './components/NginxImport'
 import { PresetPicker } from './components/PresetPicker'
 import { RequestSimulator } from './components/RequestSimulator'
 import { RoutesTable } from './components/RoutesTable'
@@ -8,7 +9,7 @@ import { presets } from './data/presets'
 import { generateNginxConfig } from './lib/nginx-generator'
 import { createRoute, parseBulkRoutes, parseCsv, parseJson } from './lib/route-parser'
 import { validateConfig } from './lib/validator'
-import type { NginxPreset, PathMode, ProxyRoute } from './types/nginx'
+import type { NginxPreset, PathMode, ProxyRoute, ServerConfig } from './types/nginx'
 
 const starterPaths = `/psp-tmis-ai-mobile/
 /psp-tmis-base-mobile/
@@ -29,6 +30,12 @@ function App() {
   const config = useMemo(() => generateNginxConfig(server, routes), [server, routes])
   const issues = useMemo(() => validateConfig(server, routes), [server, routes])
   const hasErrors = issues.some((issue) => issue.level === 'error')
+
+  const replaceFromImport = (nextServer: ServerConfig, incoming: ProxyRoute[]) => {
+    setDomain(nextServer.domain)
+    setPort(nextServer.port)
+    setRoutes(incoming)
+  }
 
   const mergeRoutes = (incoming: ProxyRoute[]) => {
     const seen = new Set(
@@ -112,22 +119,28 @@ function App() {
 
         <nav>
           <button>快速开始</button>
-          <button className="active">常用模板</button>
+          <button>常用模板</button>
           <button>自定义配置</button>
-          <button>导入现有配置</button>
+          <button className="active">导入现有配置</button>
         </nav>
 
         <div className="tip">
-          <strong>💡 Stage 3</strong>
-          <p>模板、路由高级配置和请求模拟已经加入。下一阶段会支持反解析已有 Nginx。</p>
+          <strong>💡 Stage 4</strong>
+          <p>现在可以把已有 server 配置反解析成表单。复杂 rewrite 和正则 location 会明确提示，不会静默猜测。</p>
         </div>
       </aside>
 
       <section className="workspace">
         <div className="formArea">
+          <NginxImport
+            onReplace={replaceFromImport}
+            onAppend={mergeRoutes}
+            onNotice={setNotice}
+          />
+
           <section className="card">
             <header>
-              <span>1</span>
+              <span>2</span>
               <div>
                 <h2>常用模板</h2>
                 <p>快速加入常见代理场景，再按实际环境微调</p>
@@ -138,7 +151,7 @@ function App() {
 
           <section className="card">
             <header>
-              <span>2</span>
+              <span>3</span>
               <div>
                 <h2>Server 基础配置</h2>
                 <p>设置域名和监听端口</p>
@@ -158,7 +171,7 @@ function App() {
 
           <section className="card">
             <header>
-              <span>3</span>
+              <span>4</span>
               <div>
                 <h2>批量代理路由</h2>
                 <p>粘贴或导入，一次生成多个 location</p>
@@ -229,7 +242,7 @@ function App() {
 
         <aside className="preview card">
           <header>
-            <span>6</span>
+            <span>7</span>
             <div>
               <h2>生成的 Nginx 配置</h2>
               <p>实时预览，可复制或下载</p>

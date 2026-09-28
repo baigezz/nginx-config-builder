@@ -56,7 +56,7 @@ export function RoutesTable({ routes, onChange, onNotice }: RoutesTableProps) {
   return (
     <section className="card">
       <header>
-        <span>4</span>
+        <span>5</span>
         <div>
           <h2>路由列表 <em>({routes.length} 条)</em></h2>
           <p>编辑 location、WebSocket、超时、上传限制和缓存策略</p>
