@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import './App.css'
-import { GatewayWorkspace } from './components/GatewayWorkspace'
 import { NginxImport } from './components/NginxImport'
 import { PresetPicker } from './components/PresetPicker'
 import { RequestSimulator } from './components/RequestSimulator'
@@ -31,7 +30,6 @@ function createInitialServer() {
 }
 
 function App() {
-  const [workspaceMode, setWorkspaceMode] = useState<'builder' | 'gateway'>('builder')
   const [servers, setServers] = useState<NginxServer[]>(() => [createInitialServer()])
   const [activeServerId, setActiveServerId] = useState('')
   const [input, setInput] = useState(starterPaths)
@@ -178,19 +176,18 @@ function App() {
         </div>
 
         <nav>
-          <button className={workspaceMode === 'builder' ? 'active' : ''} onClick={() => setWorkspaceMode('builder')}>常规生成器</button>
-          <button className={workspaceMode === 'gateway' ? 'active' : ''} onClick={() => setWorkspaceMode('gateway')}>配置文件批量编辑</button>
+          <button>快速开始</button>
+          <button>常用模板</button>
+          <button className="active">多 Server / TLS</button>
+          <button>导入现有配置</button>
         </nav>
 
         <div className="tip">
-          <strong>💡 {workspaceMode === 'gateway' ? 'OpenResty 文件编辑' : 'Stage 5'}</strong>
-          <p>{workspaceMode === 'gateway'
-            ? '导入现有 .conf，在页面批量添加路径并下载对应文件。'
-            : '支持多个 Server、HTTPS/TLS、proxy_pass URI 映射，并尽量保留未结构化的原始指令。'}</p>
+          <strong>💡 Stage 5</strong>
+          <p>支持多个 Server、HTTPS/TLS、proxy_pass URI 映射，并尽量保留未结构化的原始指令。</p>
         </div>
       </aside>
 
-      {workspaceMode === 'gateway' ? <GatewayWorkspace /> : (
       <section className="workspace">
         <div className="formArea">
           <NginxImport
@@ -431,7 +428,6 @@ function App() {
           </div>
         </aside>
       </section>
-      )}
     </main>
   )
 }
