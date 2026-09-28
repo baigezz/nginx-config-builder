@@ -64,11 +64,22 @@ export function generateServerBlock(server: NginxServer) {
     serverLines.push(`  ${item.replace(/;?$/, ';')}`)
   })
 
+  const rawBlocks = server.rawBlocks
+    .map((block) =>
+      block
+        .trim()
+        .split('\n')
+        .map((line) => `  ${line}`)
+        .join('\n'),
+    )
+    .join('\n\n')
+
   const locations = server.routes.map(generateLocation).join('\n\n  ')
-  const locationBlock = locations ? `\n\n  ${locations}` : ''
+  const bodyParts = [rawBlocks, locations].filter(Boolean)
+  const body = bodyParts.length ? `\n\n${bodyParts.map((part) => `  ${part.replace(/^  /, '')}`).join('\n\n')}` : ''
 
   return `server {
-${serverLines.join('\n')}${locationBlock}
+${serverLines.join('\n')}${body}
 }`
 }
 
