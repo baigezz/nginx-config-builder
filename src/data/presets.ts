@@ -2,6 +2,7 @@ import type { NginxPreset, RouteSeed } from '../types/nginx'
 
 const defaults: Omit<RouteSeed, 'path' | 'upstream'> = {
   pathMode: 'preserve',
+  proxyPassUri: '',
   locationModifier: 'prefix',
   websocket: false,
   connectTimeout: '',
@@ -9,6 +10,7 @@ const defaults: Omit<RouteSeed, 'path' | 'upstream'> = {
   sendTimeout: '',
   clientMaxBodySize: '',
   disableCache: false,
+  rawDirectives: [],
 }
 
 export const presets: NginxPreset[] = [
