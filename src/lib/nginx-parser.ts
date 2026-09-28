@@ -247,7 +247,7 @@ function parseLocationHeader(
   if (tokens[0] === '~' || tokens[0] === '~*' || tokens[0].startsWith('@')) {
     diagnostics.push({
       level: 'warning',
-      message: `暂不结构化导入正则或命名 location：location ${header}。`,
+      message: `正则或命名 location 将作为 Raw Block 原样保留：location ${header}。`,
     })
     return null
   }
@@ -272,7 +272,7 @@ function parseProxyPass(
   if (!match) {
     diagnostics.push({
       level: 'warning',
-      message: `${path} 的 proxy_pass 暂无法结构化解析：${value}。`,
+      message: `${path} 的 proxy_pass 暂无法结构化解析，将把整个 location 作为 Raw Block 保留：${value}。`,
     })
     return null
   }
@@ -307,48 +307,13 @@ function parseRoute(
   if (!proxyPassDirective) {
     diagnostics.push({
       level: 'info',
-      message: `跳过 ${location.path}：没有检测到 proxy_pass。`,
+      message: `${location.path} 没有 proxy_pass，将作为 Raw Block 原样保留。`,
     })
     return null
   }
 
   const proxy = parseProxyPass(proxyPassDirective.value, location.path, diagnostics)
   if (!proxy) return null
-
-  const standardHeaders = new Set([
-    'host',
-    'x-real-ip',
-    'x-forwarded-for',
-    'x-forwarded-proto',
-    'upgrade',
-    'connection',
-  ])
-
-  const rawDirectives = directives
-    .filter((item) => {
-      const name = item.name.toLowerCase()
-      if (
-        [
-          'proxy_pass',
-          'proxy_http_version',
-          'proxy_connect_timeout',
-          'proxy_read_timeout',
-          'proxy_send_timeout',
-          'client_max_body_size',
-          'proxy_cache',
-        ].includes(name)
-      ) {
-        return false
-      }
-
-      if (name === 'proxy_set_header') {
-        const headerName = item.value.split(/\s+/)[0]?.toLowerCase()
-        return !standardHeaders.has(headerName)
-      }
-
-      return true
-    })
-    .map((item) => item.raw)
 
   const websocket =
     /proxy_set_header\s+Upgrade\s+\$http_upgrade\s*;/i.test(block.body) ||
@@ -357,9 +322,61 @@ function parseRoute(
   if (/\b(if|limit_except)\b[^{}]*\{/i.test(block.body)) {
     diagnostics.push({
       level: 'warning',
-      message: `${location.path} 含嵌套块（如 if / limit_except），当前不会自动重建该嵌套块，请人工确认。`,
+      message: `${location.path} 含嵌套块（如 if / limit_except），为避免有损转换，将整个 location 作为 Raw Block 保留。`,
     })
+    return null
   }
+
+  const generatedHeaders = new Map([
+    ['host', '$host'],
+    ['x-real-ip', '$remote_addr'],
+    ['x-forwarded-for', '$proxy_add_x_forwarded_for'],
+    ['x-forwarded-proto', '$scheme'],
+  ])
+
+  const rawDirectives = directives
+    .filter((item) => {
+      const name = item.name.toLowerCase()
+
+      if (
+        [
+          'proxy_pass',
+          'proxy_connect_timeout',
+          'proxy_read_timeout',
+          'proxy_send_timeout',
+          'client_max_body_size',
+        ].includes(name)
+      ) {
+        return false
+      }
+
+      if (name === 'proxy_http_version') {
+        return !(websocket && item.value.trim() === '1.1')
+      }
+
+      if (name === 'proxy_cache') {
+        return item.value.trim().toLowerCase() !== 'off'
+      }
+
+      if (name === 'proxy_set_header') {
+        const [headerName = '', ...valueParts] = item.value.trim().split(/\s+/)
+        const headerKey = headerName.toLowerCase()
+        const headerValue = valueParts.join(' ')
+
+        if (generatedHeaders.get(headerKey) === headerValue) return false
+        if (websocket && headerKey === 'upgrade' && headerValue === '$http_upgrade') return false
+        if (
+          websocket &&
+          headerKey === 'connection' &&
+          ['upgrade', '"upgrade"', "'upgrade'"].includes(headerValue.toLowerCase())
+        ) {
+          return false
+        }
+      }
+
+      return true
+    })
+    .map((item) => item.raw)
 
   return createRoute({
     path: location.path,
@@ -405,9 +422,21 @@ function parseServerBody(
     .filter((item) => !consumed.has(item))
     .map((item) => item.raw)
 
-  const routes = locationBlocks
-    .map((block) => parseRoute(block, diagnostics))
-    .filter((route): route is ProxyRoute => Boolean(route))
+  const routes: ProxyRoute[] = []
+  const rawBlocks: string[] = []
+
+  locationBlocks.forEach((block) => {
+    const route = parseRoute(block, diagnostics)
+    if (route) {
+      routes.push(route)
+      return
+    }
+
+    const body = block.body.trim()
+    rawBlocks.push(
+      `location ${block.header} {\n${body}\n}`,
+    )
+  })
 
   const sslEnabled =
     /(?:^|\s)ssl(?:\s|$)/i.test(listenValue) ||
@@ -422,6 +451,7 @@ function parseServerBody(
       sslCertificate: certDirective?.value ?? '',
       sslCertificateKey: keyDirective?.value ?? '',
       rawDirectives,
+      rawBlocks,
     },
     routes,
   )
