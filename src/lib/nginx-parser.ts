@@ -244,7 +244,36 @@ export function parseNginxConfig(source: string): ParsedNginxConfig {
   )
 
   const serverName = directive(serverOnlyBody, 'server_name') || 'example.com'
-  const listen = parseListen(directive(serverOnlyBody, 'listen'), diagnostics)
+  const listenValue = directive(serverOnlyBody, 'listen')
+  const listen = parseListen(listenValue, diagnostics)
+
+  const unsupportedServerDirectives = [
+    'ssl_certificate',
+    'ssl_certificate_key',
+    'root',
+    'index',
+    'return',
+    'rewrite',
+    'include',
+    'access_log',
+    'error_log',
+  ].filter((name) => new RegExp(`\\b${name}\\b`).test(serverOnlyBody))
+
+  if (/\\bssl\\b/i.test(listenValue) || unsupportedServerDirectives.some((name) => name.startsWith('ssl_'))) {
+    diagnostics.push({
+      level: 'warning',
+      message: '检测到 HTTPS/TLS 配置。当前阶段只导入 server_name、端口和反向代理路由，证书与 SSL 参数不会自动保留。',
+    })
+  }
+
+  const otherServerDirectives = unsupportedServerDirectives.filter((name) => !name.startsWith('ssl_'))
+  if (otherServerDirectives.length) {
+    diagnostics.push({
+      level: 'warning',
+      message: `检测到尚未结构化支持的 Server 指令：${otherServerDirectives.join('、')}。重新生成前请人工确认。`,
+    })
+  }
+
   const routes: ProxyRoute[] = []
 
   locationBlocks.forEach((block) => {
