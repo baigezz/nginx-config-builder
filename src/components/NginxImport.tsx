@@ -123,7 +123,7 @@ export function NginxImport({ onReplace, onAppend, onNotice }: NginxImportProps)
           </div>
 
           <div className="parsedServerList">
-            {parsed.servers.map((server, serverIndex) => (
+            {parsed.servers.map((server) => (
               <div className="parsedServer" key={server.id}>
                 <div className="parsedServerTitle">
                   <div>
