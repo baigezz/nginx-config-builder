@@ -7,16 +7,16 @@ const sampleConfig = `server {
   listen 80;
   server_name example.com;
 
-  location /JSTMBSW/ {
-    proxy_pass http://10.1.21.29:8871/JSTMBSW/;
+  location /catalog/ {
+    proxy_pass http://backend.example.com/catalog/;
   }
 
-  location /preview {
-    proxy_pass http://10.1.31.16:8000/preview;
+  location /reports {
+    proxy_pass http://reports.example.com/reports;
   }
 
-  location /tles-psp/api {
-    proxy_pass http://10.1.21.27:17005/api;
+  location /service/api {
+    proxy_pass http://api.example.com/v1;
   }
 }
 

@@ -58,14 +58,14 @@ export const presets: NginxPreset[] = [
     ],
   },
   {
-    id: 'mobile-services',
-    name: '移动端微服务',
-    description: '一次生成 ai / base / net-taxi 三条代理路由。',
+    id: 'batch-services',
+    name: '批量服务路径',
+    description: '一次生成三条示例代理路由。',
     badge: 'Batch',
     routes: [
-      { ...defaults, path: '/psp-tmis-ai-mobile/', upstream: 'http://10.0.0.20:8080' },
-      { ...defaults, path: '/psp-tmis-base-mobile/', upstream: 'http://10.0.0.20:8080' },
-      { ...defaults, path: '/psp-tmis-net-taxi-mobile/', upstream: 'http://10.0.0.20:8080' },
+      { ...defaults, path: '/service-a/', upstream: 'http://backend.example.com:8080' },
+      { ...defaults, path: '/service-b/', upstream: 'http://backend.example.com:8080' },
+      { ...defaults, path: '/service-c/', upstream: 'http://backend.example.com:8080' },
     ],
   },
 ]

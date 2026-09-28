@@ -18,14 +18,14 @@ import {
 import { validateConfig } from './lib/validator'
 import type { NginxPreset, NginxServer, PathMode, ProxyRoute } from './types/nginx'
 
-const starterPaths = `/psp-tmis-ai-mobile/
-/psp-tmis-base-mobile/
-/psp-tmis-net-taxi-mobile/`
+const starterPaths = `/service-a/
+/service-b/
+/service-c/`
 
 function createInitialServer() {
   return createServer(
     { domain: 'example.com', port: '80' },
-    parseBulkRoutes(starterPaths, 'http://10.0.0.20:8080', 'preserve'),
+    parseBulkRoutes(starterPaths, 'http://backend.example.com:8080', 'preserve'),
   )
 }
 
@@ -33,7 +33,7 @@ function App() {
   const [servers, setServers] = useState<NginxServer[]>(() => [createInitialServer()])
   const [activeServerId, setActiveServerId] = useState('')
   const [input, setInput] = useState(starterPaths)
-  const [defaultUpstream, setDefaultUpstream] = useState('http://10.0.0.20:8080')
+  const [defaultUpstream, setDefaultUpstream] = useState('http://backend.example.com:8080')
   const [pathMode, setPathMode] = useState<PathMode>('preserve')
   const [notice, setNotice] = useState('')
 

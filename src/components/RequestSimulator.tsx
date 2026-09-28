@@ -7,7 +7,7 @@ interface RequestSimulatorProps {
 }
 
 export function RequestSimulator({ routes }: RequestSimulatorProps) {
-  const [requestPath, setRequestPath] = useState('/preview/images/1.png')
+  const [requestPath, setRequestPath] = useState('/api/items/1')
   const result = useMemo(
     () => simulateRequest(requestPath, routes),
     [requestPath, routes],
