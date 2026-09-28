@@ -1,38 +1,60 @@
-import type { LocationModifier, PathMode, ProxyRoute } from '../types/nginx'
+import type {
+  LocationModifier,
+  NginxServer,
+  PathMode,
+  ProxyRoute,
+  ServerConfig,
+} from '../types/nginx'
 
-function routeId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+export function createId(prefix = 'id') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-export function normalizePath(value: string, modifier: LocationModifier = 'prefix') {
+export function normalizePath(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return ''
-
-  const withLeadingSlash = trimmed.startsWith('/') ? trimmed : `/${trimmed}`
-  if (modifier === 'exact' || withLeadingSlash === '/' || withLeadingSlash.endsWith('/')) {
-    return withLeadingSlash
-  }
-
-  return `${withLeadingSlash}/`
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
 }
 
 export function createRoute(
   values: Partial<Omit<ProxyRoute, 'id'>> & Pick<ProxyRoute, 'path' | 'upstream'>,
 ): ProxyRoute {
-  const modifier = values.locationModifier ?? 'prefix'
-
+  const pathMode = values.pathMode ?? 'preserve'
   return {
-    id: routeId(),
-    path: normalizePath(values.path, modifier),
-    upstream: values.upstream.trim(),
-    pathMode: values.pathMode ?? 'preserve',
-    locationModifier: modifier,
+    id: createId('route'),
+    path: normalizePath(values.path),
+    upstream: values.upstream.trim().replace(/\/+$/, ''),
+    pathMode,
+    proxyPassUri:
+      values.proxyPassUri !== undefined
+        ? values.proxyPassUri.trim()
+        : pathMode === 'strip'
+          ? '/'
+          : '',
+    locationModifier: values.locationModifier ?? 'prefix',
     websocket: values.websocket ?? false,
     connectTimeout: values.connectTimeout ?? '',
     readTimeout: values.readTimeout ?? '',
     sendTimeout: values.sendTimeout ?? '',
     clientMaxBodySize: values.clientMaxBodySize ?? '',
     disableCache: values.disableCache ?? false,
+    rawDirectives: values.rawDirectives ?? [],
+  }
+}
+
+export function createServer(
+  values: Partial<ServerConfig> & Pick<ServerConfig, 'domain' | 'port'>,
+  routes: ProxyRoute[] = [],
+): NginxServer {
+  return {
+    id: createId('server'),
+    domain: values.domain.trim() || 'example.com',
+    port: values.port.trim() || '80',
+    sslEnabled: values.sslEnabled ?? false,
+    sslCertificate: values.sslCertificate ?? '',
+    sslCertificateKey: values.sslCertificateKey ?? '',
+    rawDirectives: values.rawDirectives ?? [],
+    routes,
   }
 }
 
@@ -67,11 +89,21 @@ export function parseCsv(
   const start = header.includes('path') && header.includes('upstream') ? 1 : 0
 
   return rows.slice(start).map((row) => {
-    const [path, upstream, mode, websocket] = row.split(',').map((cell) => cell.trim())
+    const [path, upstream, mode, websocket, proxyPassUri] = row
+      .split(',')
+      .map((cell) => cell.trim())
+    const parsedMode: PathMode =
+      mode === 'strip' || mode === 'strip-prefix'
+        ? 'strip'
+        : mode === 'custom'
+          ? 'custom'
+          : defaultMode
+
     return createRoute({
       path,
       upstream: upstream || defaultUpstream,
-      pathMode: mode === 'strip' || mode === 'strip-prefix' ? 'strip' : defaultMode,
+      pathMode: parsedMode,
+      proxyPassUri: proxyPassUri || undefined,
       websocket: websocket === 'true',
     })
   })
@@ -104,13 +136,18 @@ export function parseJson(
         ? record.locationModifier
         : 'prefix'
 
+    const parsedMode: PathMode =
+      record.pathMode === 'strip' || record.pathMode === 'strip-prefix'
+        ? 'strip'
+        : record.pathMode === 'custom'
+          ? 'custom'
+          : defaultMode
+
     return createRoute({
       path: record.path,
       upstream: typeof record.upstream === 'string' ? record.upstream : defaultUpstream,
-      pathMode:
-        record.pathMode === 'strip' || record.pathMode === 'strip-prefix'
-          ? 'strip'
-          : defaultMode,
+      pathMode: parsedMode,
+      proxyPassUri: typeof record.proxyPassUri === 'string' ? record.proxyPassUri : undefined,
       locationModifier,
       websocket: record.websocket === true,
       connectTimeout: typeof record.connectTimeout === 'string' ? record.connectTimeout : '',
@@ -119,6 +156,9 @@ export function parseJson(
       clientMaxBodySize:
         typeof record.clientMaxBodySize === 'string' ? record.clientMaxBodySize : '',
       disableCache: record.disableCache === true,
+      rawDirectives: Array.isArray(record.rawDirectives)
+        ? record.rawDirectives.filter((item): item is string => typeof item === 'string')
+        : [],
     })
   })
 }
