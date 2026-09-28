@@ -27,6 +27,7 @@ export interface ServerConfig {
   sslCertificate: string
   sslCertificateKey: string
   rawDirectives: string[]
+  rawBlocks: string[]
 }
 
 export interface NginxServer extends ServerConfig {
