@@ -54,6 +54,7 @@ export function createServer(
     sslCertificate: values.sslCertificate ?? '',
     sslCertificateKey: values.sslCertificateKey ?? '',
     rawDirectives: values.rawDirectives ?? [],
+    rawBlocks: values.rawBlocks ?? [],
     routes,
   }
 }
