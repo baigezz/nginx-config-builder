@@ -1,5 +1,10 @@
-import { createRoute } from './route-parser'
-import type { LocationModifier, ProxyRoute, ServerConfig } from '../types/nginx'
+import { createRoute, createServer } from './route-parser'
+import type {
+  LocationModifier,
+  NginxServer,
+  PathMode,
+  ProxyRoute,
+} from '../types/nginx'
 
 export interface ParseDiagnostic {
   level: 'warning' | 'info'
@@ -7,8 +12,7 @@ export interface ParseDiagnostic {
 }
 
 export interface ParsedNginxConfig {
-  server: ServerConfig
-  routes: ProxyRoute[]
+  servers: NginxServer[]
   diagnostics: ParseDiagnostic[]
 }
 
@@ -17,6 +21,12 @@ interface BlockMatch {
   body: string
   start: number
   end: number
+}
+
+interface DirectiveMatch {
+  name: string
+  value: string
+  raw: string
 }
 
 function stripComments(source: string) {
@@ -141,14 +151,82 @@ function removeRanges(source: string, ranges: Array<{ start: number; end: number
   return chars.join('')
 }
 
-function directive(body: string, name: string) {
-  const match = body.match(new RegExp(`\\b${name}\\s+([^;]+);`, 'i'))
-  return match?.[1]?.trim() ?? ''
+function extractTopLevelDirectives(source: string): DirectiveMatch[] {
+  const result: DirectiveMatch[] = []
+  let depth = 0
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  let buffer = ''
+
+  const flush = () => {
+    const raw = buffer.trim()
+    buffer = ''
+    if (!raw) return
+
+    const match = raw.match(/^([A-Za-z_][\w-]*)\s+([\s\S]+)$/)
+    if (!match) return
+    result.push({ name: match[1], value: match[2].trim(), raw: `${raw};` })
+  }
+
+  for (const char of source) {
+    if (escaped) {
+      if (depth === 0) buffer += char
+      escaped = false
+      continue
+    }
+
+    if (char === '\\') {
+      if (depth === 0) buffer += char
+      escaped = true
+      continue
+    }
+
+    if (quote) {
+      if (depth === 0) buffer += char
+      if (char === quote) quote = null
+      continue
+    }
+
+    if (char === '"' || char === "'") {
+      if (depth === 0) buffer += char
+      quote = char
+      continue
+    }
+
+    if (char === '{') {
+      depth += 1
+      if (depth === 1) buffer = ''
+      continue
+    }
+
+    if (char === '}') {
+      depth = Math.max(0, depth - 1)
+      continue
+    }
+
+    if (depth > 0) continue
+
+    if (char === ';') {
+      flush()
+      continue
+    }
+
+    buffer += char
+  }
+
+  return result
+}
+
+function firstDirective(directives: DirectiveMatch[], name: string) {
+  return directives.find((item) => item.name.toLowerCase() === name.toLowerCase())
 }
 
 function parseListen(value: string, diagnostics: ParseDiagnostic[]) {
   if (!value) return '80'
-  const port = value.match(/(?:^|:)(\d{1,5})(?:\s|$)/)?.[1] ?? value.match(/^\d{1,5}/)?.[0]
+  const port =
+    value.match(/(?:^|:)(\d{1,5})(?:\s|$)/)?.[1] ??
+    value.match(/^\d{1,5}/)?.[0]
+
   if (!port) {
     diagnostics.push({
       level: 'warning',
@@ -169,7 +247,7 @@ function parseLocationHeader(
   if (tokens[0] === '~' || tokens[0] === '~*' || tokens[0].startsWith('@')) {
     diagnostics.push({
       level: 'warning',
-      message: `暂不导入正则或命名 location：location ${header}。`,
+      message: `暂不结构化导入正则或命名 location：location ${header}。`,
     })
     return null
   }
@@ -189,32 +267,173 @@ function parseProxyPass(
   value: string,
   path: string,
   diagnostics: ParseDiagnostic[],
-): { upstream: string; pathMode: 'preserve' | 'strip' } | null {
+): { upstream: string; proxyPassUri: string; pathMode: PathMode } | null {
   const match = value.match(/^(https?:\/\/[^/\s]+)(\/[^\s]*)?$/i)
   if (!match) {
     diagnostics.push({
       level: 'warning',
-      message: `${path} 的 proxy_pass 无法安全映射：${value}。`,
+      message: `${path} 的 proxy_pass 暂无法结构化解析：${value}。`,
     })
     return null
   }
 
-  const origin = match[1]
-  const uri = match[2] ?? ''
+  const upstream = match[1]
+  const proxyPassUri = match[2] ?? ''
 
-  if (!uri) return { upstream: origin, pathMode: 'preserve' }
-  if (uri === '/') return { upstream: origin, pathMode: 'strip' }
+  if (!proxyPassUri) {
+    return { upstream, proxyPassUri: '', pathMode: 'preserve' }
+  }
 
-  diagnostics.push({
-    level: 'warning',
-    message: `${path} 的 proxy_pass 包含自定义 URI「${uri}」，当前编辑器暂不自动转换该路由。`,
-  })
-  return null
+  if (proxyPassUri === '/') {
+    return { upstream, proxyPassUri: '/', pathMode: 'strip' }
+  }
+
+  if (proxyPassUri === path) {
+    return { upstream, proxyPassUri, pathMode: 'preserve' }
+  }
+
+  return { upstream, proxyPassUri, pathMode: 'custom' }
 }
 
-function riskyDirectives(body: string) {
-  const names = ['rewrite', 'try_files', 'return', 'fastcgi_pass', 'uwsgi_pass', 'grpc_pass']
-  return names.filter((name) => new RegExp(`\\b${name}\\b`).test(body))
+function parseRoute(
+  block: BlockMatch,
+  diagnostics: ParseDiagnostic[],
+): ProxyRoute | null {
+  const location = parseLocationHeader(block.header, diagnostics)
+  if (!location?.path) return null
+
+  const directives = extractTopLevelDirectives(block.body)
+  const proxyPassDirective = firstDirective(directives, 'proxy_pass')
+  if (!proxyPassDirective) {
+    diagnostics.push({
+      level: 'info',
+      message: `跳过 ${location.path}：没有检测到 proxy_pass。`,
+    })
+    return null
+  }
+
+  const proxy = parseProxyPass(proxyPassDirective.value, location.path, diagnostics)
+  if (!proxy) return null
+
+  const standardHeaders = new Set([
+    'host',
+    'x-real-ip',
+    'x-forwarded-for',
+    'x-forwarded-proto',
+    'upgrade',
+    'connection',
+  ])
+
+  const rawDirectives = directives
+    .filter((item) => {
+      const name = item.name.toLowerCase()
+      if (
+        [
+          'proxy_pass',
+          'proxy_http_version',
+          'proxy_connect_timeout',
+          'proxy_read_timeout',
+          'proxy_send_timeout',
+          'client_max_body_size',
+          'proxy_cache',
+        ].includes(name)
+      ) {
+        return false
+      }
+
+      if (name === 'proxy_set_header') {
+        const headerName = item.value.split(/\s+/)[0]?.toLowerCase()
+        return !standardHeaders.has(headerName)
+      }
+
+      return true
+    })
+    .map((item) => item.raw)
+
+  const websocket =
+    /proxy_set_header\s+Upgrade\s+\$http_upgrade\s*;/i.test(block.body) ||
+    /proxy_set_header\s+Connection\s+["']?upgrade["']?\s*;/i.test(block.body)
+
+  if (/\b(if|limit_except)\b[^{}]*\{/i.test(block.body)) {
+    diagnostics.push({
+      level: 'warning',
+      message: `${location.path} 含嵌套块（如 if / limit_except），当前不会自动重建该嵌套块，请人工确认。`,
+    })
+  }
+
+  return createRoute({
+    path: location.path,
+    upstream: proxy.upstream,
+    pathMode: proxy.pathMode,
+    proxyPassUri: proxy.proxyPassUri,
+    locationModifier: location.modifier,
+    websocket,
+    connectTimeout: firstDirective(directives, 'proxy_connect_timeout')?.value ?? '',
+    readTimeout: firstDirective(directives, 'proxy_read_timeout')?.value ?? '',
+    sendTimeout: firstDirective(directives, 'proxy_send_timeout')?.value ?? '',
+    clientMaxBodySize: firstDirective(directives, 'client_max_body_size')?.value ?? '',
+    disableCache: /^off$/i.test(firstDirective(directives, 'proxy_cache')?.value ?? ''),
+    rawDirectives,
+  })
+}
+
+function parseServerBody(
+  serverBody: string,
+  diagnostics: ParseDiagnostic[],
+  index: number,
+): NginxServer {
+  const locationBlocks = findBlocks(serverBody, 'location')
+  const serverOnlyBody = removeRanges(
+    serverBody,
+    locationBlocks.map(({ start, end }) => ({ start, end })),
+  )
+  const directives = extractTopLevelDirectives(serverOnlyBody)
+
+  const listenDirective = firstDirective(directives, 'listen')
+  const serverNameDirective = firstDirective(directives, 'server_name')
+  const certDirective = firstDirective(directives, 'ssl_certificate')
+  const keyDirective = firstDirective(directives, 'ssl_certificate_key')
+  const listenValue = listenDirective?.value ?? ''
+
+  const consumed = new Set<DirectiveMatch>(
+    [listenDirective, serverNameDirective, certDirective, keyDirective].filter(
+      (item): item is DirectiveMatch => Boolean(item),
+    ),
+  )
+
+  const rawDirectives = directives
+    .filter((item) => !consumed.has(item))
+    .map((item) => item.raw)
+
+  const routes = locationBlocks
+    .map((block) => parseRoute(block, diagnostics))
+    .filter((route): route is ProxyRoute => Boolean(route))
+
+  const sslEnabled =
+    /(?:^|\s)ssl(?:\s|$)/i.test(listenValue) ||
+    Boolean(certDirective) ||
+    Boolean(keyDirective)
+
+  const server = createServer(
+    {
+      domain: serverNameDirective?.value || `server-${index + 1}.example.com`,
+      port: parseListen(listenValue, diagnostics),
+      sslEnabled,
+      sslCertificate: certDirective?.value ?? '',
+      sslCertificateKey: keyDirective?.value ?? '',
+      rawDirectives,
+    },
+    routes,
+  )
+
+  if (sslEnabled && (!server.sslCertificate || !server.sslCertificateKey)) {
+    diagnostics.push({
+      level: 'warning',
+      message: `${server.domain} 启用了 SSL，但证书或私钥路径不完整。`,
+    })
+  }
+
+  return server
 }
 
 export function parseNginxConfig(source: string): ParsedNginxConfig {
@@ -222,114 +441,31 @@ export function parseNginxConfig(source: string): ParsedNginxConfig {
   const diagnostics: ParseDiagnostic[] = []
   const serverBlocks = findBlocks(cleaned, 'server')
 
-  if (serverBlocks.length > 1) {
-    diagnostics.push({
-      level: 'info',
-      message: `检测到 ${serverBlocks.length} 个 server 块，本次先导入第一个。`,
-    })
-  }
+  const servers = serverBlocks.length
+    ? serverBlocks.map((block, index) => parseServerBody(block.body, diagnostics, index))
+    : [parseServerBody(cleaned, diagnostics, 0)]
 
-  const serverBody = serverBlocks[0]?.body ?? cleaned
   if (!serverBlocks.length) {
     diagnostics.push({
       level: 'info',
-      message: '未检测到 server 块，将输入内容按 server/location 片段尝试解析。',
+      message: '未检测到 server 块，已把输入内容作为单个 server/location 片段解析。',
     })
   }
 
-  const locationBlocks = findBlocks(serverBody, 'location')
-  const serverOnlyBody = removeRanges(
-    serverBody,
-    locationBlocks.map(({ start, end }) => ({ start, end })),
-  )
-
-  const serverName = directive(serverOnlyBody, 'server_name') || 'example.com'
-  const listenValue = directive(serverOnlyBody, 'listen')
-  const listen = parseListen(listenValue, diagnostics)
-
-  const unsupportedServerDirectives = [
-    'ssl_certificate',
-    'ssl_certificate_key',
-    'root',
-    'index',
-    'return',
-    'rewrite',
-    'include',
-    'access_log',
-    'error_log',
-  ].filter((name) => new RegExp(`\\b${name}\\b`).test(serverOnlyBody))
-
-  if (/\\bssl\\b/i.test(listenValue) || unsupportedServerDirectives.some((name) => name.startsWith('ssl_'))) {
-    diagnostics.push({
-      level: 'warning',
-      message: '检测到 HTTPS/TLS 配置。当前阶段只导入 server_name、端口和反向代理路由，证书与 SSL 参数不会自动保留。',
-    })
-  }
-
-  const otherServerDirectives = unsupportedServerDirectives.filter((name) => !name.startsWith('ssl_'))
-  if (otherServerDirectives.length) {
-    diagnostics.push({
-      level: 'warning',
-      message: `检测到尚未结构化支持的 Server 指令：${otherServerDirectives.join('、')}。重新生成前请人工确认。`,
-    })
-  }
-
-  const routes: ProxyRoute[] = []
-
-  locationBlocks.forEach((block) => {
-    const location = parseLocationHeader(block.header, diagnostics)
-    if (!location?.path) return
-
-    const proxyPass = directive(block.body, 'proxy_pass')
-    if (!proxyPass) {
-      diagnostics.push({
-        level: 'info',
-        message: `跳过 ${location.path}：没有检测到 proxy_pass。`,
-      })
-      return
-    }
-
-    const proxy = parseProxyPass(proxyPass, location.path, diagnostics)
-    if (!proxy) return
-
-    const risky = riskyDirectives(block.body)
-    if (risky.length) {
-      diagnostics.push({
-        level: 'warning',
-        message: `${location.path} 还包含 ${risky.join(' / ')}，这些指令不会进入结构化表单，请导入后人工确认。`,
-      })
-    }
-
-    const websocket =
-      /proxy_set_header\s+Upgrade\s+\$http_upgrade\s*;/i.test(block.body) ||
-      /proxy_set_header\s+Connection\s+["']?upgrade["']?\s*;/i.test(block.body)
-
-    routes.push(
-      createRoute({
-        path: location.path,
-        upstream: proxy.upstream,
-        pathMode: proxy.pathMode,
-        locationModifier: location.modifier,
-        websocket,
-        connectTimeout: directive(block.body, 'proxy_connect_timeout'),
-        readTimeout: directive(block.body, 'proxy_read_timeout'),
-        sendTimeout: directive(block.body, 'proxy_send_timeout'),
-        clientMaxBodySize: directive(block.body, 'client_max_body_size'),
-        disableCache: /^off$/i.test(directive(block.body, 'proxy_cache')),
-      }),
-    )
-  })
-
-  if (!routes.length) {
+  const routeCount = servers.reduce((sum, server) => sum + server.routes.length, 0)
+  if (!routeCount) {
     diagnostics.push({
       level: 'warning',
       message: '没有解析到可导入的反向代理 location。',
     })
   }
 
-  return {
-    server: { domain: serverName, port: listen },
-    routes,
-    diagnostics,
+  if (serverBlocks.length > 1) {
+    diagnostics.push({
+      level: 'info',
+      message: `已识别 ${serverBlocks.length} 个 server 块，可作为独立站点编辑。`,
+    })
   }
+
+  return { servers, diagnostics }
 }
