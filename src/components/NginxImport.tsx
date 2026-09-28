@@ -132,8 +132,10 @@ export function NginxImport({ onReplace, onAppend, onNotice }: NginxImportProps)
                       listen {server.port}{server.sslEnabled ? ' ssl' : ''} · {server.routes.length} routes
                     </small>
                   </div>
-                  {server.rawDirectives.length > 0 && (
-                    <b>{server.rawDirectives.length} raw</b>
+                  {(server.rawDirectives.length > 0 || server.rawBlocks.length > 0) && (
+                    <b>
+                      {server.rawDirectives.length + server.rawBlocks.length} raw
+                    </b>
                   )}
                 </div>
 
