@@ -286,6 +286,16 @@ function App() {
                     placeholder={'access_log /var/log/nginx/app.access.log;\ninclude /etc/nginx/snippets/security.conf;'}
                   />
                 </label>
+
+                {activeServer.rawBlocks.length > 0 && (
+                  <div className="rawBlocksPanel">
+                    <div>
+                      <strong>Raw Blocks · {activeServer.rawBlocks.length}</strong>
+                      <span>暂不结构化编辑，但生成配置时会继续保留</span>
+                    </div>
+                    <pre>{activeServer.rawBlocks.join('\n\n')}</pre>
+                  </div>
+                )}
               </section>
 
               <section className="card">
