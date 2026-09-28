@@ -107,8 +107,10 @@ td code { white-space: nowrap; }
 }
 .copy { width: 100%; margin-top: 12px; }
 @media (max-width: 1100px) {
-  .appShell { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+  .appShell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .sidebar { padding: 12px; gap: 10px; border-right: 0; border-bottom: 1px solid #e6eaf0; }
+  .sidebar nav { display: flex; flex-wrap: wrap; }
+  .sidebar .tip { display: none; }
   .workspace { grid-template-columns: 1fr; }
   .preview { position: static; }
 }
@@ -772,4 +774,48 @@ button:disabled {
   color: #d7e1ef;
   font-size: 11px;
   line-height: 1.55;
+}
+
+.gatewayWorkspace {
+  padding: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(380px, .8fr);
+  gap: 16px;
+  align-items: start;
+  align-content: start;
+}
+.gatewayToolbar { display: flex; align-items: center; gap: 12px; color: #667085; font-size: 12px; }
+.gatewayToolbar .fileButton { margin-left: 0; }
+.gatewayFileSelect { display: block; margin-top: 16px; }
+.gatewayPaste { margin-top: 14px; color: #475569; font-size: 12px; }
+.gatewayPaste summary { cursor: pointer; color: #2563eb; font-weight: 700; }
+.gatewayPaste label { display: block; margin-top: 10px; }
+.gatewayPaste textarea { min-height: 150px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gatewayPaste button { margin-top: 10px; }
+.gatewayFileSelect select { margin-top: 7px; }
+.gatewayFacts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.gatewayFacts span { padding: 6px 8px; border-radius: 6px; background: #f1f6ff; color: #35547a; font-size: 11px; }
+.gatewayBatch { min-height: 140px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.gatewayControls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-top: 12px; }
+.gatewayControls select { margin-top: 7px; }
+.gatewayRoutes { margin-top: 16px; }
+.gatewayRoutes table { min-width: 660px; }
+.gatewayRoutes td:first-child { min-width: 230px; }
+.gatewayRoutes input { min-width: 200px; }
+.gatewaySource { min-height: 420px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.5; }
+.gatewayPreview { position: sticky; top: 20px; }
+.gatewayTabs { align-items: center; flex-wrap: wrap; }
+.gatewayTabs button { border: 0; background: transparent; color: #667085; cursor: pointer; padding: 4px; }
+.gatewayTabs button.active { color: #1677ff; font-weight: 700; }
+.gatewayTabs span { margin-left: auto; }
+.gatewayEmpty { padding: 16px 0; }
+.status.error { border-color: #f5b3b3; background: #fff1f1; color: #b42318; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+@media (max-width: 1100px) {
+  .gatewayWorkspace { grid-template-columns: 1fr; }
+  .gatewayPreview { position: static; }
+}
+@media (max-width: 680px) {
+  .gatewayWorkspace { padding: 10px; }
+  .gatewayControls { grid-template-columns: 1fr; }
 }
