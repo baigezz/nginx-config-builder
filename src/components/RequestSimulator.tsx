@@ -16,7 +16,7 @@ export function RequestSimulator({ routes }: RequestSimulatorProps) {
   return (
     <section className="card simulatorCard">
       <header>
-        <span>5</span>
+        <span>6</span>
         <div>
           <h2>请求路径模拟器</h2>
           <p>预览 Nginx 会匹配哪条 location，以及最终转发到哪里</p>
