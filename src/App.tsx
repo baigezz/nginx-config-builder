@@ -8,7 +8,7 @@ import { presets } from './data/presets'
 import { generateNginxConfig } from './lib/nginx-generator'
 import { createRoute, parseBulkRoutes, parseCsv, parseJson } from './lib/route-parser'
 import { validateConfig } from './lib/validator'
-import type { NginxPreset, PathMode, ProxyRoute } from './types/nginx'
+import type { NginxPreset, PathMode, ProxyRoute, ServerConfig } from './types/nginx'
 
 const starterPaths = `/psp-tmis-ai-mobile/
 /psp-tmis-base-mobile/
