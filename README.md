@@ -2,9 +2,6 @@
 
 一个面向常见反向代理场景的可视化 Nginx 配置生成与导入工具。
 
-在线预览：
-
-https://baigezz.github.io/nginx-config-builder/
 
 ## 当前能力
 
